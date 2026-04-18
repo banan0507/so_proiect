@@ -144,6 +144,120 @@ void add(const char *district, const char *role, const char *user) {
     printf("Report #%d added successfully to district '%s'\n", r.id, district);
 }
 
+void mode_to_string(mode_t mode, char *str) {
+    // owner
+    str[0] = (mode & S_IRUSR) ? 'r' : '-';
+    str[1] = (mode & S_IWUSR) ? 'w' : '-';
+    str[2] = (mode & S_IXUSR) ? 'x' : '-';
+    // group
+    str[3] = (mode & S_IRGRP) ? 'r' : '-';
+    str[4] = (mode & S_IWGRP) ? 'w' : '-';
+    str[5] = (mode & S_IXGRP) ? 'x' : '-';
+    // others
+    str[6] = (mode & S_IROTH) ? 'r' : '-';
+    str[7] = (mode & S_IWOTH) ? 'w' : '-';
+    str[8] = (mode & S_IXOTH) ? 'x' : '-';
+    str[9] = '\0';
+}
+
+void list(const char *district, const char *role, const char *user) {
+    char path[256];
+    snprintf(path, sizeof(path), "%s/reports.dat", district);
+
+    // 1. Verifica daca fisierul exista
+    struct stat st;
+    if (stat(path, &st) == -1) {
+        printf("Error: district '%s' not found\n", district);
+        return;
+    }
+
+    // 2. Afiseaza info despre fisier
+    char perm_str[10];
+    mode_to_string(st.st_mode, perm_str);
+
+    char *mod_time = ctime(&st.st_mtime);
+    mod_time[strlen(mod_time)-1] = '\0';
+
+    printf("=== File Info ===\n");
+    printf("Permissions : %s\n", perm_str);
+    printf("Size        : %ld bytes\n", st.st_size);
+    printf("Last modified: %s\n", mod_time);
+    printf("=================\n\n");
+
+    // 3. Verifica daca sunt rapoarte
+    int num_reports = st.st_size / sizeof(Report);
+    if (num_reports == 0) {
+        printf("No reports found in district '%s'\n", district);
+        return;
+    }
+
+    // 4. Deschide fisierul si citeste rapoartele
+    int fd = open(path, O_RDONLY);
+    if (fd == -1) { perror("open reports.dat"); return; }
+
+    printf("=== Reports in district '%s' ===\n", district);
+
+    Report r;
+    while (read(fd, &r, sizeof(Report)) == sizeof(Report)) {
+        char *ts = ctime(&r.timestamp);
+        ts[strlen(ts)-1] = '\0';
+
+        printf("-----------------------------\n");
+        printf("ID         : %d\n", r.id);
+        printf("Inspector  : %s\n", r.inspector);
+        printf("Category   : %s\n", r.category);
+        printf("Severity   : %d\n", r.severity);
+        printf("GPS        : (%.4f, %.4f)\n", r.latitude, r.longitude);
+        printf("Timestamp  : %s\n", ts);
+        printf("Description: %s\n", r.description);
+    }
+    printf("-----------------------------\n");
+    printf("Total: %d report(s)\n", num_reports);
+
+    close(fd);
+}
+
+void view(const char *district, int report_id, const char *role, const char *user) {
+    char path[256];
+    snprintf(path, sizeof(path), "%s/reports.dat", district);
+
+    // verifica daca fisierul exista
+    struct stat st;
+    if (stat(path, &st) == -1) {
+        printf("Error: district '%s' not found\n", district);
+        return;
+    }
+
+    int fd = open(path, O_RDONLY);
+    if (fd == -1) { perror("open reports.dat"); return; }
+
+    Report r;
+    int found = 0;
+
+    while (read(fd, &r, sizeof(Report)) == sizeof(Report)) {
+        if (r.id == report_id) {
+            found = 1;
+            char *ts = ctime(&r.timestamp);
+            ts[strlen(ts)-1] = '\0';
+
+            printf("=== Report #%d ===\n", r.id);
+            printf("Inspector  : %s\n", r.inspector);
+            printf("Category   : %s\n", r.category);
+            printf("Severity   : %d\n", r.severity);
+            printf("GPS        : (%.4f, %.4f)\n", r.latitude, r.longitude);
+            printf("Timestamp  : %s\n", ts);
+            printf("Description: %s\n", r.description);
+            break;
+        }
+    }
+
+    if (!found) {
+        printf("Error: report #%d not found in district '%s'\n", report_id, district);
+    }
+
+    close(fd);
+}
+
 int main(int argc, char** argv) {
     char *role = NULL;
     char *user = NULL;
@@ -158,11 +272,11 @@ int main(int argc, char** argv) {
             add(district, role, user);
         } else if (!strcmp(argv[i], "--list")) {
             char *district = argv[++i];
-            printf("LIST: district=%s role=%s user=%s\n", district, role, user);
+            list(district, role, user);
         } else if (!strcmp(argv[i], "--view")) {
             char *district = argv[++i];
             int id = atoi(argv[++i]);
-            printf("VIEW: district=%s id=%d role=%s user=%s\n", district, id, role, user);
+            view(district, id, role, user);
         } else if (!strcmp(argv[i], "--remove_report")) {
             char *district = argv[++i];
             int id = atoi(argv[++i]);
