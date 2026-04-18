@@ -258,6 +258,237 @@ void view(const char *district, int report_id, const char *role, const char *use
     close(fd);
 }
 
+void remove_report(const char *district, int report_id, const char *role) {
+    // 1. Doar managerul poate sterge
+    if (strcmp(role, "manager") != 0) {
+        printf("Error: only manager can remove reports\n");
+        return;
+    }
+
+    char path[256];
+    snprintf(path, sizeof(path), "%s/reports.dat", district);
+
+    // 2. Verifica permisiunile
+    struct stat st;
+    if (stat(path, &st) == -1) {
+        printf("Error: district '%s' not found\n", district);
+        return;
+    }
+
+    int num_reports = st.st_size / sizeof(Report);
+
+    // 3. Deschide fisierul
+    int fd = open(path, O_RDWR);
+    if (fd == -1) { perror("open reports.dat"); return; }
+
+    // 4. Gaseste pozitia raportului de sters
+    int found = -1;
+    Report r;
+
+    for (int i = 0; i < num_reports; i++) {
+        lseek(fd, i * sizeof(Report), SEEK_SET);
+        read(fd, &r, sizeof(Report));
+        if (r.id == report_id) {
+            found = i;
+            break;
+        }
+    }
+
+    if (found == -1) {
+        printf("Error: report #%d not found\n", report_id);
+        close(fd);
+        return;
+    }
+
+    // 5. Muta toate rapoartele de dupa found cu o pozitie mai in fata
+    for (int i = found + 1; i < num_reports; i++) {
+        // citeste raportul de la pozitia i
+        lseek(fd, i * sizeof(Report), SEEK_SET);
+        read(fd, &r, sizeof(Report));
+
+        // scrie-l la pozitia i-1
+        lseek(fd, (i - 1) * sizeof(Report), SEEK_SET);
+        write(fd, &r, sizeof(Report));
+    }
+
+    // 6. Micsoreaza fisierul cu un raport
+    ftruncate(fd, (num_reports - 1) * sizeof(Report));
+
+    close(fd);
+    printf("Report #%d removed successfully from district '%s'\n", report_id, district);
+}
+
+void update_threshold(const char *district, int value, const char *role) {
+    // 1. Doar managerul poate actualiza
+    if (strcmp(role, "manager") != 0) {
+        printf("Error: only manager can update threshold\n");
+        return;
+    }
+
+    char path[256];
+    snprintf(path, sizeof(path), "%s/district.cfg", district);
+
+    // 2. Verifica permisiunile - trebuie sa fie exact 640
+    struct stat st;
+    if (stat(path, &st) == -1) {
+        printf("Error: district '%s' not found\n", district);
+        return;
+    }
+
+    // extrage doar bitii de permisiuni
+    mode_t perms = st.st_mode & 0777;
+    if (perms != 0640) {
+        printf("Error: district.cfg permissions have been changed (expected 640, got %o)\n", perms);
+        return;
+    }
+
+    // 3. Deschide fisierul si scrie noua valoare
+    int fd = open(path, O_WRONLY | O_TRUNC);
+    if (fd == -1) { perror("open district.cfg"); return; }
+
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf), "threshold=%d\n", value);
+    write(fd, buf, len);
+    close(fd);
+
+    printf("Threshold updated to %d in district '%s'\n", value, district);
+}
+
+int parse_condition(const char *input, char *field, char *op, char *value) {
+    // facem o copie ca sa nu modificam input-ul original
+    char copy[256];
+    strncpy(copy, input, sizeof(copy) - 1);
+    copy[255] = '\0';
+
+    // cautam primul ':'
+    char *first = strchr(copy, ':');
+    if (first == NULL) return 0;
+    *first = '\0'; // taiem string-ul aici
+
+    // cautam al doilea ':'
+    char *second = strchr(first + 1, ':');
+    if (second == NULL) return 0;
+    *second = '\0'; // taiem din nou
+
+    // copiem cele 3 parti
+    strncpy(field, copy, 31);
+    strncpy(op, first + 1, 3);
+    strncpy(value, second + 1, 63);
+
+    field[31] = '\0';
+    op[3] = '\0';
+    value[63] = '\0';
+
+    return 1;
+}
+
+int match_condition(Report *r, const char *field, const char *op, const char *value) {
+    // helper macro pentru comparatii numerice
+    #define COMPARE(a, b) ( \
+        strcmp(op, "==") == 0 ? (a) == (b) : \
+        strcmp(op, "!=") == 0 ? (a) != (b) : \
+        strcmp(op, "<")  == 0 ? (a) <  (b) : \
+        strcmp(op, "<=") == 0 ? (a) <= (b) : \
+        strcmp(op, ">")  == 0 ? (a) >  (b) : \
+        strcmp(op, ">=") == 0 ? (a) >= (b) : 0)
+
+    if (strcmp(field, "severity") == 0) {
+        int val = atoi(value);
+        return COMPARE(r->severity, val);
+    }
+
+    if (strcmp(field, "timestamp") == 0) {
+        time_t val = (time_t)atol(value);
+        return COMPARE(r->timestamp, val);
+    }
+
+    if (strcmp(field, "category") == 0) {
+        int cmp = strcmp(r->category, value);
+        return COMPARE(cmp, 0);
+    }
+
+    if (strcmp(field, "inspector") == 0) {
+        int cmp = strcmp(r->inspector, value);
+        return COMPARE(cmp, 0);
+    }
+
+    printf("Error: unknown field '%s'\n", field);
+    return 0;
+
+    #undef COMPARE
+}
+
+void filter(const char *district, const char *role, const char *user, 
+            char **conditions, int num_conditions) {
+    char path[256];
+    snprintf(path, sizeof(path), "%s/reports.dat", district);
+
+    // verifica daca fisierul exista
+    struct stat st;
+    if (stat(path, &st) == -1) {
+        printf("Error: district '%s' not found\n", district);
+        return;
+    }
+
+    int fd = open(path, O_RDONLY);
+    if (fd == -1) { perror("open reports.dat"); return; }
+
+    int num_reports = st.st_size / sizeof(Report);
+    if (num_reports == 0) {
+        printf("No reports found in district '%s'\n", district);
+        close(fd);
+        return;
+    }
+
+    printf("=== Filtered Reports in district '%s' ===\n", district);
+    int found = 0;
+    Report r;
+
+    while (read(fd, &r, sizeof(Report)) == sizeof(Report)) {
+        int match = 1;
+
+        // verifica toate conditiile
+        for (int i = 0; i < num_conditions; i++) {
+            char field[32], op[4], value[64];
+
+            if (!parse_condition(conditions[i], field, op, value)) {
+                printf("Error: invalid condition '%s'\n", conditions[i]);
+                match = 0;
+                break;
+            }
+
+            if (!match_condition(&r, field, op, value)) {
+                match = 0;
+                break;
+            }
+        }
+
+        if (match) {
+            found++;
+            char *ts = ctime(&r.timestamp);
+            ts[strlen(ts)-1] = '\0';
+
+            printf("-----------------------------\n");
+            printf("ID         : %d\n", r.id);
+            printf("Inspector  : %s\n", r.inspector);
+            printf("Category   : %s\n", r.category);
+            printf("Severity   : %d\n", r.severity);
+            printf("GPS        : (%.4f, %.4f)\n", r.latitude, r.longitude);
+            printf("Timestamp  : %s\n", ts);
+            printf("Description: %s\n", r.description);
+        }
+    }
+
+    if (found == 0) {
+        printf("No reports match the given conditions\n");
+    } else {
+        printf("-----------------------------\n");
+        printf("Total matching: %d report(s)\n", found);
+    }
+
+    close(fd);
+}
+
 int main(int argc, char** argv) {
     char *role = NULL;
     char *user = NULL;
@@ -280,14 +511,18 @@ int main(int argc, char** argv) {
         } else if (!strcmp(argv[i], "--remove_report")) {
             char *district = argv[++i];
             int id = atoi(argv[++i]);
-            printf("REMOVE: district=%s id=%d role=%s user=%s\n", district, id, role, user);
+            remove_report(district, id, role);
         } else if (!strcmp(argv[i], "--update_threshold")) {
             char *district = argv[++i];
             int val = atoi(argv[++i]);
-            printf("UPDATE_THRESHOLD: district=%s val=%d role=%s user=%s\n", district, val, role, user);
+            update_threshold(district, val, role);
         } else if (!strcmp(argv[i], "--filter")) {
             char *district = argv[++i];
-            printf("FILTER: district=%s role=%s user=%s\n", district, role, user);
+            // toate argumentele ramase sunt conditii
+            char **conditions = &argv[i+1];
+            int num_conditions = argc - i - 1;
+            i = argc; // am consumat toate argumentele
+            filter(district, role, user, conditions, num_conditions);
         }
     }
 
