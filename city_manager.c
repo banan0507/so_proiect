@@ -114,6 +114,10 @@ int main(int argc, char** argv) {
             int num_conditions = argc - i - 1;
             i = argc;
             filter(district, role, user, conditions, num_conditions);
+        
+        } else if (!strcmp(argv[i], "--remove_district")) {
+            char *district = argv[++i];
+            remove_district(district, role);
         }
     }
  

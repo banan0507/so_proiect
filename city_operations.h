@@ -26,5 +26,6 @@ void view(const char *district, int report_id, const char *role, const char *use
 void remove_report(const char *district, int report_id, const char *role);
 void update_threshold(const char *district, int value, const char *role);
 void filter(const char *district, const char *role, const char *user, char **conditions, int num_conditions);
+void remove_district(const char *district, const char *role);
 
 #endif

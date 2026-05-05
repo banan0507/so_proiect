@@ -1,5 +1,6 @@
 #include "city_operations.h"
 #include "secondary_functions.h"
+#include <sys/wait.h>
 
 /*
  * add() - Adauga un raport nou in district
@@ -467,4 +468,62 @@ void filter(const char *district, const char *role, const char *user,
     }
 
     close(fd);
+}
+
+void remove_district(const char *district, const char *role) {
+    // 1. Doar managerul poate sterge districte
+    if (strcmp(role, "manager") != 0) {
+        printf("Error: only manager can remove districts\n");
+        return;
+    }
+
+    // 2. Verifica ca districtul exista
+    struct stat st;
+    if (stat(district, &st) == -1) {
+        printf("Error: district '%s' not found\n", district);
+        return;
+    }
+
+    // 3. Creaza procesul copil
+    pid_t pid = fork();
+
+    if (pid == -1) {
+        // fork() a esuat
+        perror("fork");
+        return;
+    }
+
+    if (pid == 0) {
+        // ====== PROCESUL COPIL ======
+        // execvp() inlocuieste procesul curent cu "rm -rf <district>"
+        // argv pentru rm: { "rm", "-rf", "<district>", NULL }
+        char *args[] = { "rm", "-rf", (char *)district, NULL };
+        execvp("rm", args);
+
+        // daca execvp() returneaza, inseamna ca a esuat
+        perror("execvp");
+        exit(1);
+    }
+
+    // ====== PROCESUL PARINTE ======
+    // waitpid() asteapta sa termine copilul
+    // al doilea argument e statusul de iesire al copilului
+    int status;
+    waitpid(pid, &status, 0);
+
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        printf("District '%s' deleted successfully\n", district);
+    } else {
+        printf("Error: failed to delete district '%s'\n", district);
+        return;
+    }
+
+    // 4. Sterge symlink-ul active_reports-<district>
+    char link_name[256];
+    snprintf(link_name, sizeof(link_name), "active_reports-%s", district);
+    if (unlink(link_name) == -1) {
+        printf("Warning: could not delete symlink '%s'\n", link_name);
+    } else {
+        printf("Symlink '%s' deleted successfully\n", link_name);
+    }
 }
