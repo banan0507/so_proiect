@@ -12,5 +12,6 @@ void create_symlink(const char *district);
 void mode_to_string(mode_t mode, char *str);
 int parse_condition(const char *input, char *field, char *op, char *value);
 int match_condition(Report *r, const char *field, const char *op, const char *value); 
+pid_t read_monitor_pid();
 
 #endif

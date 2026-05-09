@@ -1,6 +1,7 @@
 #include "city_operations.h"
 #include "secondary_functions.h"
 #include <sys/wait.h>
+#include <signal.h>
 
 /*
  * add() - Adauga un raport nou in district
@@ -15,90 +16,81 @@
  */
 void add(const char *district, const char *role, const char *user) {
 
-    /*
-     * create_district() creaza folderul si cele 3 fisiere cu permisiunile corecte.
-     * Daca exista deja, nu face nimic (errno == EEXIST e ignorat).
-     * create_symlink() creaza active_reports-<district> -> <district>/reports.dat
-     */
     create_district(district);
     create_symlink(district);
 
-    /* construim calea catre reports.dat: ex "downtown/reports.dat" */
     char path[256];
     snprintf(path, sizeof(path), "%s/reports.dat", district);
 
-    /*
-     * O_RDWR = deschide pentru citire SI scriere (avem nevoie de ambele)
-     * O_APPEND = orice write() se face la sfarsitul fisierului automat
-     */
     int fd = open(path, O_RDWR | O_APPEND);
     if (fd == -1) { perror("open reports.dat"); return; }
 
-    /*
-     * Calculam cate rapoarte exista deja in fisier.
-     * stat() umple structura st cu informatii despre fisier, inclusiv st_size.
-     * Impartim dimensiunea fisierului la dimensiunea unui raport (sizeof(Report))
-     * ca sa stim cate rapoarte sunt stocate.
-     * ex: daca fisierul are 784 bytes si sizeof(Report) = 392 -> 2 rapoarte
-     */
     struct stat st;
     stat(path, &st);
     int num_reports = st.st_size / sizeof(Report);
 
-    /*
-     * Initializam structura Report cu 0 pe toti bytes.
-     * memset(&r, 0, sizeof(Report)) e important ca sa nu ramanem cu
-     * date random in memorie in campurile necompletate.
-     */
     Report r;
     memset(&r, 0, sizeof(Report));
 
-    /* ID-ul urmator e numarul de rapoarte existente + 1 */
     r.id = num_reports + 1;
-
-    /*
-     * strncpy copiaza maxim sizeof(r.inspector)-1 caractere
-     * ca sa nu depasim buffer-ul (buffer overflow)
-     */
     strncpy(r.inspector, user, sizeof(r.inspector) - 1);
-
-    /* time(NULL) returneaza timpul curent in secunde de la 1 Ian 1970 */
     r.timestamp = time(NULL);
 
-    /* citim datele de la utilizator */
+    /* citim si validam latitude */
     printf("Latitude: ");
-    scanf("%lf", &r.latitude);   // %lf citeste un double
+    while (scanf("%lf", &r.latitude) != 1) {
+        printf("Invalid input! Latitude must be a number: ");
+        while (getchar() != '\n');
+    }
 
+    /* citim si validam longitude */
     printf("Longitude: ");
-    scanf("%lf", &r.longitude);
+    while (scanf("%lf", &r.longitude) != 1) {
+        printf("Invalid input! Longitude must be a number: ");
+        while (getchar() != '\n');
+    }
 
+    /* citim si validam category */
     printf("Category (road/lighting/flooding): ");
-    scanf("%31s", r.category);   // %31s citeste maxim 31 caractere (+ '\0')
+    scanf("%31s", r.category);
+    while (strcmp(r.category, "road") != 0 &&
+           strcmp(r.category, "lighting") != 0 &&
+           strcmp(r.category, "flooding") != 0) {
+        printf("Invalid category! Must be road, lighting or flooding: ");
+        scanf("%31s", r.category);
+    }
 
+    /* citim si validam severity */
     printf("Severity (1=minor, 2=moderate, 3=critical): ");
-    scanf("%d", &r.severity);
+    while (scanf("%d", &r.severity) != 1 || r.severity < 1 || r.severity > 3) {
+        printf("Invalid input! Severity must be 1, 2 or 3: ");
+        while (getchar() != '\n');
+    }
 
     printf("Description: ");
-    /*
-     * getchar() consuma '\n'-ul ramas in buffer dupa scanf("%d").
-     * Fara el, fgets() ar citi imediat '\n' si ar returna un string gol.
-     */
     getchar();
     fgets(r.description, sizeof(r.description), stdin);
-    /* strcspn gaseste pozitia primului '\n' si il inlocuieste cu '\0' */
     r.description[strcspn(r.description, "\n")] = '\0';
 
-    /*
-     * write() scrie toata structura Report ca bytes raw in fisier.
-     * &r = adresa structurii, sizeof(Report) = numarul de bytes de scris.
-     * Asta e ce inseamna fisier binar - nu scrie text, scrie bytes direct.
-     */
     write(fd, &r, sizeof(Report));
     close(fd);
 
-    /* doar managerul scrie in log */
-    if (!strcmp(role, "manager")) {
-        write_log(district, role, user, "add_report");
+    /*
+     * Citim PID-ul monitorului din .monitor_pid si trimitem SIGUSR1.
+     * Scriem in log daca notificarea a reusit sau nu.
+     */
+    pid_t monitor_pid = read_monitor_pid();
+    if (monitor_pid == -1) {
+        write_log(district, role, user, "add_report - monitor not running, could not notify");
+        printf("Warning: monitor is not running\n");
+    } else {
+        if (kill(monitor_pid, SIGUSR1) == -1) {
+            write_log(district, role, user, "add_report - monitor could not be notified (kill failed)");
+            printf("Warning: could not notify monitor (PID %d)\n", monitor_pid);
+        } else {
+            write_log(district, role, user, "add_report - monitor notified successfully");
+            printf("Monitor notified successfully (PID %d)\n", monitor_pid);
+        }
     }
 
     printf("Report #%d added successfully to district '%s'\n", r.id, district);

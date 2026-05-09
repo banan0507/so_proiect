@@ -304,3 +304,25 @@ int match_condition(Report *r, const char *field, const char *op, const char *va
 
     #undef COMPARE  /* eliberam macro-ul dupa folosire - buna practica */
 }
+
+/*
+*   read_monitor_pid() - Citeste PID-ul monitorului din .monitor_pid
+*   
+*   Returneaza PID-ul daca fisierul exista si e valid, -1 altfel.
+*/
+
+    pid_t read_monitor_pid(){
+        int fd = open(".monitor_pid", O_RDONLY);
+        if(fd == -1){
+            return -1;  //fisierul nu exista, monitorul nu ruleaza
+        }
+
+        char buf[32];
+        int len = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+
+        if(len <= 0)    return -1;
+        buf[len] = '\0';
+
+        return (pid_t)atoi(buf);
+    }
