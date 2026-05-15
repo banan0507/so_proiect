@@ -1,1 +1,2 @@
 [Sun Apr 26 20:44:56 2026] role=manager user=alice action=add_report
+[Sat May  9 14:25:56 2026] role=manager user=alice action=add_report - monitor not running, could not notify

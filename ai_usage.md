@@ -1,44 +1,43 @@
-# AI Usage Documentation
+# AI Usage Documentation - Phases 1 and 2
 
 ## Tool used
 Claude (claude.ai)
 
-## What I asked for
+## Phase 1
 
-I needed two helper functions for the filter command:
+### What I asked for
+1. A function parse_condition() that splits "field:operator:value" into 3 parts
+2. A function match_condition() that checks if a Report satisfies a condition
 
-1. A function to parse a condition string like "severity:>=:2" into
-   three separate parts: field, operator, and value.
+### What was generated
+- parse_condition() using strchr() to split the string
+- match_condition() using a COMPARE macro for comparisons
 
-2. A function to check if a Report struct satisfies a given condition,
-   supporting fields like severity, category, inspector, timestamp
-   and operators ==, !=, <, <=, >, >=.
+### What I changed
+- Added explicit null terminators after strncpy calls
+- Added error message for unknown fields in match_condition()
 
-I described my Report struct and asked Claude to generate both functions.
+### What I learned
+- How strchr() works to split strings
+- How C macros reduce repetitive code
+- That strncpy() doesn't always null-terminate
 
-## What was generated
+## Phase 2
 
-Claude generated parse_condition() using strchr() to find and split
-on the ':' separator, and match_condition() using a COMPARE macro
-to handle all six comparison operators without repeating code.
+### What I asked for
+- Guidance on how sigaction() works vs signal()
+- How to structure the signal handlers correctly
 
-## What I changed
+### What was generated
+- The overall structure of monitor_reports.c with sigaction() calls
+- The handle_sigusr1() and handle_sigint() handlers
 
-- Added explicit null terminators after strncpy calls in parse_condition()
-  because I wasn't sure if strncpy always null-terminates (it doesn't
-  when the source is longer than n).
-- I verified that match_condition() correctly uses atoi() for severity
-  and strcmp() for string fields - the AI handled this correctly.
+### What I changed
+- Added fflush(stdout) in handlers because output wasn't appearing immediately
+- Added validation that .monitor_pid exists before sending kill()
 
-## What I learned
-
-- How strchr() works to split strings by finding a character position
-- How C macros can reduce repetitive code (the COMPARE macro)
-- The difference between atoi() for integers and strcmp() for strings
-- That strncpy() doesn't always null-terminate - you have to do it manually
-
-## What the AI got wrong
-
-The first version of match_condition() didn't handle the case where
-the field name is unknown - it just returned 0 silently. I added the
-error message so it's easier to debug bad filter conditions.
+### What I learned
+- How sigaction() works and why it's safer than signal()
+- How pause() suspends a process waiting for signals
+- How kill() sends signals between processes
+- How fork() and execvp() work together to run external commands
